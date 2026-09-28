@@ -6895,11 +6895,10 @@ HitLog.THEME = {
 }
 
 -- ESP
-local BoxESP = { Boxes = {}, Conn = {} }
 local espSets = {
-    enabled = false, targetOnly = false, outline = true, inline = true,
-    outCol = Color3.fromRGB(255,255,255), inCol  = Color3.fromRGB(0,0,0),
-    outAlpha = 0.5, inAlpha = 0.2, outSize = 0.1, inSize = 0.05,
+    enabled = false, targetOnly = false, inline = true,
+    inCol  = Color3.fromRGB(0,0,0),
+    inAlpha = 0.2, inSize = 0.05,
 }
 local bodyParts = {
     "Head","Torso","Left Arm","Right Arm","Left Leg","Right Leg",
@@ -7668,7 +7667,7 @@ wepL.Name = "WL"
 wepL.BackgroundTransparency = 1
 wepL.Size = UDim2.new(1, 0, 0.33, 0)
 wepL.Position = UDim2.new(0, 0, 0.67, 0)
-wepL.TextColor3 = Color3.fromRGB(135, 206, 235)
+wepL.TextColor3 = Color3.fromRGB(255, 215, 0)
 wepL.FontFace = SilkscreenFont
 wepL.TextSize = 7
 wepL.TextXAlignment = Enum.TextXAlignment.Center
@@ -8154,13 +8153,11 @@ local function updatePlayerBoxes(p)
         local obj = char:FindFirstChild(pn)
         if obj and obj:IsA("BasePart") then
             if obj.Name=="Head" then
-                local s=(obj.Size.X/2)*0.6
-                if espSets.outline then table.insert(BoxESP.Boxes[p], createAdorn("CylinderHandleAdornment",obj,"out",-1,espSets.outCol,espSets.outAlpha,Vector2.new(s+espSets.outSize,obj.Size.Z+espSets.outSize))) end
-                if espSets.inline  then table.insert(BoxESP.Boxes[p], createAdorn("CylinderHandleAdornment",obj,"in", 1,espSets.inCol, espSets.inAlpha, Vector2.new(s+espSets.inSize, obj.Size.Z+espSets.inSize)))  end
-            else
-                if espSets.outline then table.insert(BoxESP.Boxes[p], createAdorn("BoxHandleAdornment",obj,"out",-1,espSets.outCol,espSets.outAlpha,obj.Size+Vector3.new(espSets.outSize,espSets.outSize,espSets.outSize))) end
-                if espSets.inline  then table.insert(BoxESP.Boxes[p], createAdorn("BoxHandleAdornment",obj,"in", 1,espSets.inCol, espSets.inAlpha, obj.Size+Vector3.new(espSets.inSize, espSets.inSize, espSets.inSize)))  end
-            end
+    local s=(obj.Size.X/2)*0.6
+    if espSets.inline then table.insert(BoxESP.Boxes[p], createAdorn("CylinderHandleAdornment",obj,"in", 1,espSets.inCol, espSets.inAlpha, Vector2.new(s+espSets.inSize, obj.Size.Z+espSets.inSize))) end
+else
+    if espSets.inline then table.insert(BoxESP.Boxes[p], createAdorn("BoxHandleAdornment",obj,"in", 1,espSets.inCol, espSets.inAlpha, obj.Size+Vector3.new(espSets.inSize, espSets.inSize, espSets.inSize))) end
+end
         end
     end
 end
@@ -8258,6 +8255,187 @@ end
 local function RestoreTool()
     for p,props in pairs(FF_S.ToolProps) do if p and p.Parent then p.Material=props.Material; p.Color=props.Color end end
     FF_S.ToolProps={}
+end
+
+-- =====================================================================
+-- == 2D Box ESP (ported from lunar.lua)
+-- =====================================================================
+do
+    local ESP2D = getgenv().ESP2D or {
+        Enabled     = false,
+        TargetOnly  = false,
+        MaxDistance = 5000,
+        BoxColor    = Color3.fromRGB(255, 255, 255),
+        BoxThick    = 0.5,
+        FillOn      = false,
+        FillAlpha   = 0.3,
+        FillColor   = Color3.fromRGB(0, 0, 0),
+        Cache       = {},
+    }
+    getgenv().ESP2D = ESP2D
+
+    -- 颜色配置持久化
+    local ESP2D_SaveFile = "XF_CC/esp2d.json"
+
+    local function ESP2D_Save()
+        pcall(function()
+            writefile(ESP2D_SaveFile, game:GetService("HttpService"):JSONEncode({
+                BoxColor  = {ESP2D.BoxColor.R, ESP2D.BoxColor.G, ESP2D.BoxColor.B},
+                FillColor = {ESP2D.FillColor.R, ESP2D.FillColor.G, ESP2D.FillColor.B},
+                BoxThick  = ESP2D.BoxThick,
+                FillAlpha = ESP2D.FillAlpha,
+                FillOn    = ESP2D.FillOn,
+                MaxDistance = ESP2D.MaxDistance,
+            }))
+        end)
+    end
+    getgenv().ESP2D_Save = ESP2D_Save
+
+    -- 启动时读取保存的颜色
+    if isfile(ESP2D_SaveFile) then
+        pcall(function()
+            local d = game:GetService("HttpService"):JSONDecode(readfile(ESP2D_SaveFile))
+            if type(d.BoxColor) == "table" then ESP2D.BoxColor = Color3.new(d.BoxColor[1], d.BoxColor[2], d.BoxColor[3]) end
+            if type(d.FillColor) == "table" then ESP2D.FillColor = Color3.new(d.FillColor[1], d.FillColor[2], d.FillColor[3]) end
+            if tonumber(d.BoxThick) then ESP2D.BoxThick = tonumber(d.BoxThick) end
+            if tonumber(d.FillAlpha) then ESP2D.FillAlpha = tonumber(d.FillAlpha) end
+            if type(d.FillOn) == "boolean" then ESP2D.FillOn = d.FillOn end
+            if tonumber(d.MaxDistance) then ESP2D.MaxDistance = tonumber(d.MaxDistance) end
+        end)
+    end
+
+    local ESP2D_Gui = nil
+
+    local function ESP2D_EnsureGui()
+        if ESP2D_Gui and ESP2D_Gui.Parent then return ESP2D_Gui end
+        ESP2D_Gui = Instance.new("ScreenGui")
+        ESP2D_Gui.Name           = "CAT_ESP2D"
+        ESP2D_Gui.ResetOnSpawn   = false
+        ESP2D_Gui.IgnoreGuiInset = true
+        ESP2D_Gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+        ESP2D_Gui.DisplayOrder   = 999
+        ESP2D_Gui.Parent         = gethui and gethui() or CoreGui
+        return ESP2D_Gui
+    end
+
+    local function ESP2D_Make(player)
+        if ESP2D.Cache[player] then return ESP2D.Cache[player] end
+        ESP2D_EnsureGui()
+
+        local holder = Instance.new("Frame")
+        holder.Name = "H_" .. player.Name
+        holder.BackgroundTransparency = 1
+        holder.BorderSizePixel = 0
+        holder.Visible = false
+        holder.Parent = ESP2D_Gui
+
+        local fill = Instance.new("Frame")
+        fill.Name = "Fill"
+        fill.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        fill.BackgroundTransparency = 0.7
+        fill.BorderSizePixel = 0
+        fill.Size = UDim2.new(1, 0, 1, 0)
+        fill.Position = UDim2.new(0, 0, 0, 0)
+        fill.ZIndex = 0
+        fill.Visible = false
+        fill.Parent = holder
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Thickness = 0.5
+        stroke.Color = Color3.fromRGB(255, 255, 255)
+        stroke.Parent = holder
+
+        ESP2D.Cache[player] = { Holder = holder, Stroke = stroke, Fill = fill }
+        return ESP2D.Cache[player]
+    end
+
+    local function ESP2D_Clear(player)
+        local entry = ESP2D.Cache[player]
+        if not entry then return end
+        if entry.Holder then entry.Holder:Destroy() end
+        ESP2D.Cache[player] = nil
+    end
+
+    local ESP2D_Parts = {
+        "Head","Torso","Left Arm","Right Arm","Left Leg","Right Leg",
+        "UpperTorso","LowerTorso","LeftUpperArm","LeftLowerArm","LeftHand",
+        "RightUpperArm","RightLowerArm","RightHand",
+        "LeftUpperLeg","LeftLowerLeg","LeftFoot",
+        "RightUpperLeg","RightLowerLeg","RightFoot",
+    }
+
+    local function ESP2D_Bounds(char)
+        local minX, minY = math.huge, math.huge
+        local maxX, maxY = -math.huge, -math.huge
+        local found = false
+        local focal = Camera.ViewportSize.Y / (2 * math.tan(math.rad(Camera.FieldOfView) * 0.5))
+        for _, pn in ipairs(ESP2D_Parts) do
+            local part = char:FindFirstChild(pn)
+            if part and part:IsA("BasePart") and part.Transparency < 1 then
+                local pos, onScreen = Camera:WorldToViewportPoint(part.Position)
+                if onScreen and pos.Z > 0 then
+                    local sz = part.Size
+                    local xOff = (sz.X * 0.5 * focal) / pos.Z
+                    local yOff = (sz.Y * 0.5 * focal) / pos.Z
+                    if pos.X - xOff < minX then minX = pos.X - xOff end
+                    if pos.X + xOff > maxX then maxX = pos.X + xOff end
+                    if pos.Y - yOff < minY then minY = pos.Y - yOff end
+                    if pos.Y + yOff > maxY then maxY = pos.Y + yOff end
+                    found = true
+                end
+            end
+        end
+        if not found then return nil end
+        return minX, minY, maxX - minX, maxY - minY
+    end
+
+    local function ESP2D_Update()
+        if not ESP2D.Enabled then
+            for _, entry in pairs(ESP2D.Cache) do
+                if entry.Holder then entry.Holder.Visible = false end
+            end
+            return
+        end
+        local myChar = LocalPlayer.Character
+        local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+        if not myRoot then return end
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local entry = ESP2D.Cache[player] or ESP2D_Make(player)
+                local char = player.Character
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local root = char:FindFirstChild("HumanoidRootPart")
+                if hum and root and hum.Health > 0 and not char:FindFirstChildOfClass("ForceField") then
+                    local show = true
+                    if ESP2D.TargetOnly and not table.find(TargetList, player.Name) then show = false end
+                    local dist = (myRoot.Position - root.Position).Magnitude
+                    if dist > ESP2D.MaxDistance then show = false end
+                    if show then
+                        local x, y, w, h = ESP2D_Bounds(char)
+                        if x then
+                            entry.Holder.Visible = true
+                            entry.Holder.Position = UDim2.fromOffset(math.floor(x), math.floor(y))
+                            entry.Holder.Size = UDim2.fromOffset(math.floor(w), math.floor(h))
+                            entry.Stroke.Thickness = ESP2D.BoxThick
+                            entry.Stroke.Color = ESP2D.BoxColor
+                            entry.Fill.Visible = ESP2D.FillOn
+                            entry.Fill.BackgroundColor3 = ESP2D.FillColor
+                            entry.Fill.BackgroundTransparency = 1 - ESP2D.FillAlpha
+                        else
+                            entry.Holder.Visible = false
+                        end
+                    else
+                        entry.Holder.Visible = false
+                    end
+                else
+                    entry.Holder.Visible = false
+                end
+            end
+        end
+    end
+
+    RunService.RenderStepped:Connect(ESP2D_Update)
+    Players.PlayerRemoving:Connect(ESP2D_Clear)
 end
 
 local function GetAllPlayerNames()
@@ -9030,33 +9208,19 @@ do -- Visuals page
         sec:Toggle({Name="Health", Flag="CAT_Health_44",   Default=false, Callback=function(v) HealthEnabled=v;  if not v then for _,p in pairs(Players:GetPlayers()) do local t=p.Character and p.Character:FindFirstChild("CAT_NameTag"); local l=t and t:FindFirstChild("HL"); if l then l.Visible=false end end end end}):Keybind({Flag="CAT_Health_44_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_Health_44"] then Library.SetFlags["CAT_Health_44"](v) end end})
         sec:Toggle({Name="Info Panel", Flag="CAT_InfoPanel_48", Default=false, Callback=function(v) InfoPanelEnabled=v; if not v then SetInfoPanelVisible(false) end end}):Keybind({Flag="CAT_InfoPanel_48_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_InfoPanel_48"] then Library.SetFlags["CAT_InfoPanel_48"](v) end end})
         sec:Toggle({Name="Safe Chams", Flag="CAT_Safe_Chams_45", Default=false, Callback=function(v) SafeChamsEnabled = v; if v then StartSafeChams() end end}):Keybind({Flag="CAT_Safe_Chams_45_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_Safe_Chams_45"] then Library.SetFlags["CAT_Safe_Chams_45"](v) end end})
-        local ct = sec:Toggle({Name="Chams", Flag="CAT_VS_Chams", Default=false, Callback=function(v)
-            espSets.enabled=v
-            if not v then
-                if BoxESP.Conn.M then BoxESP.Conn.M:Disconnect() end
-                for _,c in pairs(BoxESP.Conn) do if typeof(c)=="RBXScriptConnection" then c:Disconnect() end end
-                for p in pairs(BoxESP.Boxes) do clearBoxes(p) end
-                BoxESP={Boxes={},Conn={}}
-            else
-                local function s(p)
-                    if p==LocalPlayer then return end
-                    BoxESP.Conn[p]=p.CharacterAdded:Connect(function() task.wait(0.5); updatePlayerBoxes(p) end)
-                    if p.Character then updatePlayerBoxes(p) end
-                end
-                for _,p in pairs(Players:GetPlayers()) do s(p) end
-                BoxESP.Conn.M=Players.PlayerAdded:Connect(s)
-            end
-        end})
-        ct:Keybind({Flag="CAT_VS_Chams_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_VS_Chams"] then Library.SetFlags["CAT_VS_Chams"](v) end end})
-        ct:Colorpicker({Name="Outline Color", Flag="CAT_Outline_Color_46", Default=espSets.outCol, Callback=function(c,a) espSets.outCol=c; espSets.outAlpha=a; if espSets.enabled then refreshAllESP() end end})
-        sec:Toggle({Name="Target only", Flag="CAT_Target_only_47", Default=false, Callback=function(v) espSets.targetOnly=v; if espSets.enabled then refreshAllESP() end end}):Keybind({Flag="CAT_Target_only_47_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_Target_only_47"] then Library.SetFlags["CAT_Target_only_47"](v) end end})
-        sec:Toggle({Name="Outline", Flag="CAT_Outline_48", Default=true, Callback=function(v) espSets.outline=v end}):Keybind({Flag="CAT_Outline_48_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_Outline_48"] then Library.SetFlags["CAT_Outline_48"](v) end end})
-        local it=sec:Toggle({Name="Inline", Flag="CAT_Inline_49", Default=true, Callback=function(v) espSets.inline=v end})
-        it:Keybind({Flag="CAT_Inline_49_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_Inline_49"] then Library.SetFlags["CAT_Inline_49"](v) end end})
-        it:Colorpicker({Name="Inline Color", Flag="CAT_Inline_Color_50", Default=espSets.inCol, Callback=function(c,a) espSets.inCol=c; espSets.inAlpha=a; if espSets.enabled then refreshAllESP() end end})
-        sec:Slider({Name="Outline Size", Flag="CAT_Outline_Size_51", Min=0.01, Max=1,   Default=0.1,  Decimals=0.01, Callback=function(v) espSets.outSize=v end})
-        sec:Slider({Name="Inline Size", Flag="CAT_Inline_Size_52",  Min=0.01, Max=0.5, Default=0.05, Decimals=0.01, Callback=function(v) espSets.inSize=v end})
-    end
+        
+        sec:Toggle({Name="Target only", Flag="CAT_Target_only_47", Default=false, Callback=function(v) espSets.targetOnly=v; if getgenv().ESP2D then getgenv().ESP2D.TargetOnly=v end; if espSets.enabled then refreshAllESP() end end}):Keybind({Flag="CAT_Target_only_47_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_Target_only_47"] then Library.SetFlags["CAT_Target_only_47"](v) end end})
+
+-- ===== 2D 方框透视 =====
+sec:Toggle({Name="2D Box", Flag="CAT_ESP2D_Enable", Default=false, Callback=function(v) getgenv().ESP2D.Enabled=v end}):Keybind({Flag="CAT_ESP2D_Enable_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_ESP2D_Enable"] then Library.SetFlags["CAT_ESP2D_Enable"](v) end end})
+sec:Slider({Name="2D Max Distance", Flag="CAT_ESP2D_MaxDist", Min=50, Max=10000, Default=getgenv().ESP2D.MaxDistance, Callback=function(v) getgenv().ESP2D.MaxDistance=v; getgenv().ESP2D_Save() end})
+sec:Slider({Name="2D Thickness", Flag="CAT_ESP2D_Thick", Min=0.1, Max=5, Default=getgenv().ESP2D.BoxThick, Decimals=0.1, Callback=function(v) getgenv().ESP2D.BoxThick=v; getgenv().ESP2D_Save() end})
+sec:Toggle({Name="2D Fill", Flag="CAT_ESP2D_Fill", Default=getgenv().ESP2D.FillOn, Callback=function(v) getgenv().ESP2D.FillOn=v; getgenv().ESP2D_Save() end})
+sec:Slider({Name="2D Fill Alpha", Flag="CAT_ESP2D_FillA", Min=0, Max=1, Default=getgenv().ESP2D.FillAlpha, Decimals=0.01, Callback=function(v) getgenv().ESP2D.FillAlpha=v; getgenv().ESP2D_Save() end})
+local boxColorT = sec:Toggle({Name="2D Color", Flag="CAT_ESP2D_ColorT", Default=false, Callback=function() end})
+boxColorT:Colorpicker({Name="Box Color", Flag="CAT_ESP2D_BoxColor", Default=getgenv().ESP2D.BoxColor, Callback=function(c) getgenv().ESP2D.BoxColor=c; getgenv().ESP2D_Save() end})
+boxColorT:Colorpicker({Name="Fill Color", Flag="CAT_ESP2D_FillColor", Default=getgenv().ESP2D.FillColor, Callback=function(c) getgenv().ESP2D.FillColor=c; getgenv().ESP2D_Save() end})
+end
 do -- DealerMan ESP + TEC-9 display + Body Colors ESP
     -- ================================================================
     -- State
