@@ -744,32 +744,34 @@ local CustomFont = { } do
     })
 
     Library.NotifHolder = Instances:Create("Frame", {
-        Parent = Library.Holder.Instance,
-        Name = "\0",
-        BackgroundTransparency = 1,
-        Size = UDim2New(0, 0, 1, 0),
-        BorderColor3 = FromRGB(0, 0, 0),
-        BorderSizePixel = 0,
-        AutomaticSize = Enum.AutomaticSize.X,
-        BackgroundColor3 = FromRGB(255, 255, 255)
-    })
+    Parent = Library.Holder.Instance,
+    Name = "\0",
+    BackgroundTransparency = 1,
+    Position = UDim2New(0, 0, 0, 0),                     -- 新增：从左上角开始
+    AnchorPoint = Vector2New(0, 0),                      -- 新增：锚点左上
+    Size = UDim2New(0, 0, 1, 0),
+    BorderColor3 = FromRGB(0, 0, 0),
+    BorderSizePixel = 0,
+    AutomaticSize = Enum.AutomaticSize.X,
+    BackgroundColor3 = FromRGB(255, 255, 255)
+})
 
     Instances:Create("UIListLayout", {
-        Parent = Library.NotifHolder.Instance,
-        Name = "\0",
-        VerticalAlignment = Enum.VerticalAlignment.Bottom,
-        Padding = UDimNew(0, 12),
-        SortOrder = Enum.SortOrder.LayoutOrder
-    })
+    Parent = Library.NotifHolder.Instance,
+    Name = "\0",
+    VerticalAlignment = Enum.VerticalAlignment.Top,       -- Bottom → Top
+    Padding = UDimNew(0, 12),
+    SortOrder = Enum.SortOrder.LayoutOrder
+})
 
     Instances:Create("UIPadding", {
-        Parent = Library.NotifHolder.Instance,
-        Name = "\0",
-        PaddingTop = UDimNew(0, 12),
-        PaddingBottom = UDimNew(0, 12),
-        PaddingRight = UDimNew(0, 12),
-        PaddingLeft = UDimNew(0, 12)
-    })
+    Parent = Library.NotifHolder.Instance,
+    Name = "\0",
+    PaddingTop = UDimNew(0, 12),      -- 顶部留 12px
+    PaddingBottom = UDimNew(0, 12),
+    PaddingRight = UDimNew(0, 12),
+    PaddingLeft = UDimNew(0, 12),     -- 左边留 12px
+})
 
     Library.Unload = function(self)
         for Index, Value in self.Connections do 
@@ -4978,7 +4980,8 @@ end)
                 BorderColor3 = FromRGB(0, 0, 0),
                 AutomaticSize = Enum.AutomaticSize.XY,
                 TextSize = 9,
-                BackgroundColor3 = FromRGB(255, 255, 255)
+                BackgroundColor3 = FromRGB(255, 255, 255),
+                RichText = true
             })  Items["Description"]:AddToTheme({TextColor3 = "Text"})
 
             Items["UIStroke3"] = Items["Description"]:TextBorder()
@@ -6488,7 +6491,8 @@ local Debug_Rays, TargetMode, HitSoundSelection   = false, "Near", "None"
 local Origin_Radius, Hit_Radius                   = 18.50, 23.50
 local Origin_Scans, Hit_Scans                     = 24, 24
 local ScanRate                                     = 14
-local ScanDistance                                 = 827    -- 新增：扫描距离
+local ScanDistance                                 = 827
+local WallbangDistance                             = 24    -- 穿墙距离
 local Last_Shot, Valid_Pair, Locked_Path          = 0, nil, nil
 local WB = {LastScan=0, Cached=false, Toggle=false, Threshold=0.5, Round=0}
 local NoFallEnabled                               = false
@@ -6747,6 +6751,13 @@ local HitSounds = {
 
 local SpeedState, JumpState, SpeedValue, JumpValue = false, false, 33.5, 73
 local CurrentHum = nil
+
+-- ===== 新增：加速模式相关 =====
+local SpeedMode = "Velocity"          -- "WalkSpeed" 或 "Velocity"
+local SpeedLinearVelocity = nil       -- LinearVelocity 约束实例
+local SpeedAttachment = nil           -- Attachment 实例
+local SpeedForce = nil                -- VectorForce 备用方案
+local SpeedForceAttach = nil          -- VectorForce 的 Attachment
 
 local function NR_CacheWeapons()
     NR.Cache = {}
@@ -7033,6 +7044,24 @@ local function onCharacterAdded()
     FLY.PC         = nil
     FLY.AnimTrack  = nil
     FlyRefreshBtn()
+
+    -- ===== 新增：清理速度约束（避免重生后残留）=====
+    if SpeedLinearVelocity then
+        pcall(function() SpeedLinearVelocity:Destroy() end)
+        SpeedLinearVelocity = nil
+    end
+    if SpeedAttachment then
+        pcall(function() SpeedAttachment:Destroy() end)
+        SpeedAttachment = nil
+    end
+    if SpeedForce then
+        pcall(function() SpeedForce:Destroy() end)
+        SpeedForce = nil
+    end
+    if SpeedForceAttach then
+        pcall(function() SpeedForceAttach:Destroy() end)
+        SpeedForceAttach = nil
+    end
 end
 if LocalPlayer.Character then task.spawn(onCharacterAdded) end
 LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
@@ -7206,8 +7235,8 @@ local function CreateInfoPanel()
     title.TextSize = 9
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.ZIndex = 4
-    title.Parent = inner
-    titleToggle.MouseButton1Click:Connect(ToggleInfoPanelUI)
+title.Parent = inner
+-- titleToggle.MouseButton1Click 连接在 ToggleInfoPanelUI 定义之后
 
     InfoPanelAvatar = Instance.new("ImageLabel")
     InfoPanelAvatar.Name = "Avatar"
@@ -7331,21 +7360,23 @@ local function CreateInfoPanel()
     miniToggle.Parent = InfoPanelGui
 
     local function ToggleInfoPanelUI()
-        local visible = InfoPanelFrame and InfoPanelFrame.Visible
-        if visible then
-            InfoPanelFrame.Visible = false
-            local shadow = InfoPanelGui:FindFirstChild("Shadow")
-            if shadow then shadow.Visible = false end
-            miniToggle.Visible = false
-        else
-            InfoPanelFrame.Visible = true
-            local shadow = InfoPanelGui:FindFirstChild("Shadow")
-            if shadow then shadow.Visible = true end
-            miniToggle.Visible = false
-        end
+    local visible = InfoPanelFrame and InfoPanelFrame.Visible
+    if visible then
+        InfoPanelFrame.Visible = false
+        local shadow = InfoPanelGui:FindFirstChild("Shadow")
+        if shadow then shadow.Visible = false end
+        miniToggle.Visible = false
+    else
+        InfoPanelFrame.Visible = true
+        local shadow = InfoPanelGui:FindFirstChild("Shadow")
+        if shadow then shadow.Visible = true end
+        miniToggle.Visible = false
     end
+end
 
-    miniToggle.MouseButton1Click:Connect(ToggleInfoPanelUI)
+-- 现在 ToggleInfoPanelUI 已定义，可以安全连接
+titleToggle.MouseButton1Click:Connect(ToggleInfoPanelUI)
+miniToggle.MouseButton1Click:Connect(ToggleInfoPanelUI)
 
     local resizeHandle = Instance.new("TextButton")
     resizeHandle.Name = "ResizeHandle"
@@ -7449,22 +7480,18 @@ local function CreateInfoPanel()
     UserInputService.InputEnded:Connect(EndPanelDrag)
 
     InfoPanelFrame.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.Touch then
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.Change then
-                    UpdatePanelDrag(input)
-                elseif input.UserInputState == Enum.UserInputState.End then
-                    EndPanelDrag(input)
-                end
-            end)
-        end
-    end)
-    if sh then
-        sh.Position = UDim2.new(InfoPanelFrame.Position.X.Scale, InfoPanelFrame.Position.X.Offset + 3, InfoPanelFrame.Position.Y.Scale, InfoPanelFrame.Position.Y.Offset + 4)
-        sh.Size = UDim2.new(InfoPanelFrame.Size.X.Scale, InfoPanelFrame.Size.X.Offset + 2, InfoPanelFrame.Size.Y.Scale, InfoPanelFrame.Size.Y.Offset + 2)
+    if input.UserInputType == Enum.UserInputType.Touch then
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.Change then
+                UpdatePanelDrag(input)
+            elseif input.UserInputState == Enum.UserInputState.End then
+                EndPanelDrag(input)
+            end
+        end)
     end
+end)
 
-    miniToggle.Visible = false
+miniToggle.Visible = false
 
     -- Small outer strokes, matching the existing ESP style.
     for _, obj in ipairs({InfoPanelFrame, inner, InfoPanelAvatar}) do
@@ -7615,7 +7642,7 @@ local function GetCustomTag(char, tagName, offset)
         -- Name row
         local nameL = Instance.new("TextLabel"); nameL.Name = "L"
         nameL.BackgroundTransparency = 1
-        nameL.Size     = UDim2.new(1, 0, 0.5, 0)
+        nameL.Size     = UDim2.new(1, 0, 0.34, 0)
         nameL.Position = UDim2.new(0, 0, 0, 0)
         nameL.TextColor3 = Color3.new(1,1,1)
         nameL.FontFace   = SilkscreenFont
@@ -7627,8 +7654,8 @@ local function GetCustomTag(char, tagName, offset)
         -- Distance row
         local distL = Instance.new("TextLabel"); distL.Name = "DL"
         distL.BackgroundTransparency = 1
-        distL.Size     = UDim2.new(1, 0, 0.5, 0)
-        distL.Position = UDim2.new(0, 0, 0.5, 0)
+distL.Size     = UDim2.new(1, 0, 0.33, 0)
+distL.Position = UDim2.new(0, 0, 0.34, 0)
         distL.TextColor3 = Color3.fromRGB(200, 200, 200)
         distL.FontFace   = SilkscreenFont
         distL.TextSize   = 7
@@ -7636,6 +7663,22 @@ local function GetCustomTag(char, tagName, offset)
         local s2 = Instance.new("UIStroke"); s2.Thickness = CONFIG.StrokeThickness
         s2.Color = Color3.new(0,0,0); s2.Parent = distL
         distL.Parent = tag
+        local wepL = Instance.new("TextLabel")
+wepL.Name = "WL"
+wepL.BackgroundTransparency = 1
+wepL.Size = UDim2.new(1, 0, 0.33, 0)
+wepL.Position = UDim2.new(0, 0, 0.67, 0)
+wepL.TextColor3 = Color3.fromRGB(135, 206, 235)
+wepL.FontFace = SilkscreenFont
+wepL.TextSize = 7
+wepL.TextXAlignment = Enum.TextXAlignment.Center
+wepL.Text = ""
+wepL.Visible = false
+local ws = Instance.new("UIStroke")
+ws.Thickness = CONFIG.StrokeThickness
+ws.Color = Color3.new(0, 0, 0)
+ws.Parent = wepL
+wepL.Parent = tag
         -- FF 标签（右边）
         local ffTag = Instance.new("BillboardGui")
         ffTag.Name          = "CAT_FFTag"
@@ -7719,20 +7762,6 @@ local function GetVisibleParts(origin, char)
         if p and IsVisible(origin, p) then table.insert(vis, p) end
     end
     return #vis > 0 and vis or {char:FindFirstChild("HumanoidRootPart")}
-end
-
--- 常驻重生监听（只注册一次，永不进 clearReloadConnections）
-local autoReloadCharConn = nil
-
--- 把工具监听绑定到某个角色上
-local function AutoReloadBindChar(c)
-    if not c then return end
-    task.wait(0.15)                              -- 等角色/Tool 完全就绪
-    if not AutoReload then return end
-    setupTool(c:FindFirstChildOfClass("Tool"))
-    table.insert(reloadConnections, c.ChildAdded:Connect(function(o)
-        if o:IsA("Tool") then setupTool(o) end
-    end))
 end
 
 -- 常驻重生监听（只注册一次，永不进 clearReloadConnections）
@@ -8157,7 +8186,7 @@ local function CheckWallbang(p1, p2)
     local r=Workspace:Raycast(p1,(p2-p1).Unit*d,params)
     
     -- 修改为：如果没有碰到障碍物，或者障碍物距离目标点小于等于 15 格（允许15格穿墙）
-    local ok=not r or (r.Position-p2).Magnitude<=24 
+    local ok=not r or (r.Position-p2).Magnitude<=WallbangDistance
     
     if Debug_Rays then VisualizeRay(p1, ok and p2 or (r and r.Position or p2), ok and Color3.new(0,1,0) or Color3.new(1,0,0)) end
     return ok
@@ -8836,19 +8865,37 @@ do -- Combat page
         s1:Toggle({Name="Rapid fire", Flag="CAT_Rapid_fire_26",   Callback=function(v) RF_State=v end}):Keybind({Flag="CAT_Rapid_fire_26_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_Rapid_fire_26"] then Library.SetFlags["CAT_Rapid_fire_26"](v) end end})
         s1:Toggle({Name="Auto Reload", Flag="CAT_Auto_Reload_27",  Callback=function(v) AutoReload=v; AutoReloadSetup() end}):Keybind({Flag="CAT_Auto_Reload_27_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_Auto_Reload_27"] then Library.SetFlags["CAT_Auto_Reload_27"](v) end end})
         s1:Toggle({Name="Auto buy ammo", Flag="CAT_Rage_AutoAmmo_29", Default=false, Callback=function(v)
-            SC.ARA_Enabled = v
-            if v then StartAutoAmmoRefill() end
-        end}):Keybind({Flag="CAT_Rage_AutoAmmo_29_KB", Mode="Toggle", Callback=function(v)
-            if Library and Library.SetFlags and Library.SetFlags["CAT_Rage_AutoAmmo_29"] then
-                Library.SetFlags["CAT_Rage_AutoAmmo_29"](v)
-            end
-        end})
+    SC.ARA_Enabled = v
+    if v then StartAutoAmmoRefill() end
+end}):Keybind({Flag="CAT_Rage_AutoAmmo_29_KB", Mode="Toggle", Callback=function(v)
+    if Library and Library.SetFlags and Library.SetFlags["CAT_Rage_AutoAmmo_29"] then
+        Library.SetFlags["CAT_Rage_AutoAmmo_29"](v)
+    end
+end})
+s1:Toggle({
+    Name = "Auto buy bandage",
+    Flag = "CAT_Rage_AutoBandage",
+    Default = false,
+    Callback = function(v)
+        BANDAGE.Enabled = v
+        if v then StartAutoBandage() end
+    end
+}):Keybind({
+    Flag = "CAT_Rage_AutoBandage_KB",
+    Mode = "Toggle",
+    Callback = function(v)
+        if Library and Library.SetFlags and Library.SetFlags["CAT_Rage_AutoBandage"] then
+            Library.SetFlags["CAT_Rage_AutoBandage"](v)
+        end
+    end
+})
         s1:Toggle({Name="Down Check", Flag="CAT_Down_Check_28",   Callback=function(v) DownCheck=v end}):Keybind({Flag="CAT_Down_Check_28_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_Down_Check_28"] then Library.SetFlags["CAT_Down_Check_28"](v) end end})
       s1:Slider({Name="Max Cache", Flag="CAT_Max_Cache_30",    Min=0.1, Max=25,  Default=0.5,   Decimals=0.01, Callback=function(v) WB.Threshold=v end})
         s1:Slider({Name="Origin Radius", Flag="CAT_Origin_Radius_31",Min=0.1, Max=20, Default=18.50, Decimals=0.01, Callback=function(v) Origin_Radius=v end})
         s1:Slider({Name="Origin Scans", Flag="CAT_Origin_Scans_32", Min=1,   Max=50, Default=24,    Callback=function(v) Origin_Scans=math.floor(v) end})
         s1:Slider({Name="Scan Rate",    Flag="CAT_Scan_Rate",       Min=1,   Max=60, Default=14,    Callback=function(v) ScanRate=math.floor(v) end})
 s1:Slider({Name="Scan Distance",Flag="CAT_Scan_Distance",   Min=100, Max=1260, Default=827, Callback=function(v) ScanDistance=math.floor(v) end})  -- 新增
+s1:Slider({Name="Wallbang Distance", Flag="CAT_Wallbang_Distance", Min=0, Max=100, Default=24, Callback=function(v) WallbangDistance=math.floor(v) end})  -- 新增
         
         s1:Slider({Name="Hit Radius", Flag="CAT_Hit_Radius_33",   Min=0.1, Max=25, Default=23.50, Decimals=0.01, Callback=function(v) Hit_Radius=v end})
         s1:Slider({Name="Hit Scans", Flag="CAT_Hit_Scans_34",    Min=1,   Max=50, Default=24,    Callback=function(v) Hit_Scans=math.floor(v) end})
@@ -9418,6 +9465,32 @@ do -- Player page
     local sec  = Sub:Section({Name="Movement", Side=1})
     sec:Toggle({Name="WalkSpeed", Flag="CAT_WalkSpeed_53", Callback=function(v) SpeedState=v end}):Keybind({Flag="CAT_WalkSpeed_53_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_WalkSpeed_53"] then Library.SetFlags["CAT_WalkSpeed_53"](v) end end})
     sec:Slider( {Name="Value", Flag="CAT_Value_54", Min=1, Max=100, Default=33.5, Decimals=0.1, Callback=function(v) SpeedValue=v end})
+
+-- ===== 新增：加速模式选择 =====
+sec:Dropdown({
+    Name = "Speed Mode",
+    Flag = "CAT_Speed_Mode",
+    Items = {"WalkSpeed (Original)","Velocity (Recommended)"},
+    Default = "Velocity (Recommended)",
+    Callback = function(v)
+        SpeedMode = (v == "Velocity (Recommended)") and "Velocity" or "WalkSpeed"
+            -- 切换模式时清理旧的约束
+            if SpeedLinearVelocity then
+                pcall(function() SpeedLinearVelocity:Destroy() end)
+                SpeedLinearVelocity = nil
+            end
+            if SpeedAttachment then
+                pcall(function() SpeedAttachment:Destroy() end)
+                SpeedAttachment = nil
+            end
+            -- 从 Velocity 切回 WalkSpeed 时恢复默认速度
+            if SpeedMode == "WalkSpeed" then
+                local char = LocalPlayer.Character
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if hum and not SpeedState then hum.WalkSpeed = 16 end
+            end
+        end
+    })
     sec:Toggle({Name="JumpPower", Flag="CAT_JumpPower_55", Callback=function(v) JumpState=v end}):Keybind({Flag="CAT_JumpPower_55_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_JumpPower_55"] then Library.SetFlags["CAT_JumpPower_55"](v) end end})
     sec:Slider( {Name="Value", Flag="CAT_Value_56", Min=1, Max=100, Default=73,   Decimals=0.1, Callback=function(v) JumpValue=v end})
     sec:Toggle({Name="No fall", Flag="CAT_No_fall_57", Default=false, Callback=function(v) NoFallEnabled=v end}):Keybind({Flag="CAT_No_fall_57_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_No_fall_57"] then Library.SetFlags["CAT_No_fall_57"](v) end end})
@@ -9460,24 +9533,6 @@ do -- Player page
     sec:Toggle({Name="Mobile mode", Flag="CAT_PL_MobileMode", Default=false, Callback=function(v)
         FLY.MobileMode = v
     end}):Keybind({Flag="CAT_PL_MobileMode_KB", Mode="Toggle", Callback=function(v) if Library and Library.SetFlags and Library.SetFlags["CAT_PL_MobileMode"] then Library.SetFlags["CAT_PL_MobileMode"](v) end end})
-    sec:Toggle({
-    Name="Auto buy bandage",
-    Flag="CAT_PL_AutoBandage",
-    Default=false,
-    Callback=function(v)
-        BANDAGE.Enabled = v
-        if v then
-            StartAutoBandage()
-        end
-    end
-}):Keybind({
-    Flag="CAT_PL_AutoBandage_KB", Mode="Toggle",
-    Callback=function(v)
-        if Library and Library.SetFlags and Library.SetFlags["CAT_PL_AutoBandage"] then
-            Library.SetFlags["CAT_PL_AutoBandage"](v)
-        end
-    end
-})
     sec:Toggle({Name="Infinite Stamina", Flag="CAT_PL_InfStamina", Default=false, Callback=function(Value)
         InfStaminaEnabled=Value
         if InfStaminaConnection then InfStaminaConnection:Disconnect(); InfStaminaConnection=nil end
@@ -10268,11 +10323,80 @@ end
 
 Library:CreateSettingsPage(Window, Watermark, KeybindList, WatermarkConfig)
 
-Players.PlayerAdded:Connect(function(p)
-    PL_TargetSearch:Add(p.Name); PL_WhiteSearch:Add(p.Name)
+-- ============================================================
+-- == Player List Summary (on join, delayed 2s)
+-- ============================================================
+task.delay(2, function()
+    local joinedTargets = {}
+    local joinedWhites  = {}
 
-    -- 保存的名单里有他 → 自动勾选
-    if table.find(TargetList, p.Name) then
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            if table.find(TargetList, plr.Name) then
+                table.insert(joinedTargets, plr.Name)
+            end
+            if table.find(WhiteList, plr.Name) then
+                table.insert(joinedWhites, plr.Name)
+            end
+        end
+    end
+
+    local lines = {}
+
+    if #joinedTargets > 0 then
+        table.insert(lines, string.format(
+            '<font color="rgb(255,60,60)">TargetList Online (%d):</font> %s',
+            #joinedTargets,
+            table.concat(joinedTargets, ", ")
+        ))
+    end
+
+    if #joinedWhites > 0 then
+        table.insert(lines, string.format(
+            '<font color="rgb(80,255,80)">Whitelist Online (%d):</font> %s',
+            #joinedWhites,
+            table.concat(joinedWhites, ", ")
+        ))
+    end
+
+    if #lines == 0 then
+        Library:Notification("Player List Summary", "No listed players online", 6)
+    else
+        Library:Notification(
+            "Player List Summary",
+            table.concat(lines, "  |  "),
+            8
+        )
+    end
+end)
+
+Players.PlayerAdded:Connect(function(p)
+    local inTarget = table.find(TargetList, p.Name)
+    local inWhite  = table.find(WhiteList,  p.Name)
+
+    -- 名单玩家进出提示
+    if inTarget or inWhite then
+        local nameText, tagText
+        if inTarget and inWhite then
+            nameText = string.format('<font color="rgb(80,255,80)">%s</font>', p.Name)
+            tagText  = '[<font color="rgb(255,60,60)">TargetList</font> / <font color="rgb(80,255,80)">Whitelist</font>]'
+        elseif inTarget then
+            nameText = string.format('<font color="rgb(255,60,60)">%s</font>', p.Name)
+            tagText  = '[<font color="rgb(255,60,60)">TargetList</font>]'
+        else
+            nameText = string.format('<font color="rgb(80,255,80)">%s</font>', p.Name)
+            tagText  = '[<font color="rgb(80,255,80)">Whitelist</font>]'
+        end
+        task.delay(0.5, function()
+            Library:Notification("Player Joined", nameText .. "  " .. tagText, 5)
+        end)
+    end
+
+    -- ---- 原有的 UI 更新逻辑 ----
+    PL_TargetSearch:Add(p.Name)
+    PL_WhiteSearch:Add(p.Name)
+
+    if inTarget then
         local cur = PL_TargetSearch:Get() or {}
         if not table.find(cur, p.Name) then
             local newList = table.clone(cur)
@@ -10280,7 +10404,7 @@ Players.PlayerAdded:Connect(function(p)
             pcall(function() PL_TargetSearch:Set(newList) end)
         end
     end
-    if table.find(WhiteList, p.Name) then
+    if inWhite then
         local cur = PL_WhiteSearch:Get() or {}
         if not table.find(cur, p.Name) then
             local newList = table.clone(cur)
@@ -10289,17 +10413,42 @@ Players.PlayerAdded:Connect(function(p)
         end
     end
 end)
+
 Players.PlayerRemoving:Connect(function(p)
-    PL_TargetSearch:Remove(p.Name); PL_WhiteSearch:Remove(p.Name); clearBoxes(p)
+    local inTarget = table.find(TargetList, p.Name)
+    local inWhite  = table.find(WhiteList,  p.Name)
+
+    -- 名单玩家退出提示
+    if inTarget or inWhite then
+        local nameText, tagText
+        if inTarget and inWhite then
+            nameText = string.format('<font color="rgb(80,255,80)">%s</font>', p.Name)
+            tagText  = '[<font color="rgb(255,60,60)">TargetList</font> / <font color="rgb(80,255,80)">Whitelist</font>]'
+        elseif inTarget then
+            nameText = string.format('<font color="rgb(255,60,60)">%s</font>', p.Name)
+            tagText  = '[<font color="rgb(255,60,60)">TargetList</font>]'
+        else
+            nameText = string.format('<font color="rgb(80,255,80)">%s</font>', p.Name)
+            tagText  = '[<font color="rgb(80,255,80)">Whitelist</font>]'
+        end
+        Library:Notification("Player Left", nameText .. "  " .. tagText, 5)
+    end
+
+    -- ---- 原有的清理逻辑 ----
+    PL_TargetSearch:Remove(p.Name)
+    PL_WhiteSearch:Remove(p.Name)
+    clearBoxes(p)
     if p.Character then
-        local t1=p.Character:FindFirstChild("CAT_NameTag")
-        local t2=p.Character:FindFirstChild("CAT_FFTag")
-        local t3=p.Character:FindFirstChild("CAT_HPTag")
+        local t1 = p.Character:FindFirstChild("CAT_NameTag")
+        local t2 = p.Character:FindFirstChild("CAT_FFTag")
+        local t3 = p.Character:FindFirstChild("CAT_HPTag")
         if t1 then t1:Destroy() end
         if t2 then t2:Destroy() end
         if t3 then t3:Destroy() end
     end
 end)
+
+    
 end)() -- end UI IIFE
 
 -- =====================================================================
@@ -10776,13 +10925,78 @@ end)
 RunService.RenderStepped:Connect(function(dt)
     local char=LocalPlayer.Character
     local hum=char and char:FindFirstChildOfClass("Humanoid")
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+
     if hum then
-        if SpeedState and hum.WalkSpeed~=SpeedValue then hum.WalkSpeed=SpeedValue end
+        -- 跳跃力量（两种模式通用）
         if JumpState then
             if not hum.UseJumpPower then hum.UseJumpPower=true end
             if hum.JumpPower~=JumpValue then hum.JumpPower=JumpValue end
         end
+
+-- ===== 加速逻辑 =====
+if SpeedState and hrp then
+    if SpeedMode == "WalkSpeed" then
+        -- 原版模式：直接改 WalkSpeed
+        if hum.WalkSpeed ~= SpeedValue then
+            hum.WalkSpeed = SpeedValue
+        end
+    else
+        -- ===== Velocity 模式：用 BodyVelocity 实现（兼容性最好）=====
+        local moveDir = hum.MoveDirection
+
+        -- 没有移动输入时，销毁约束，让角色自然停下
+        if moveDir.Magnitude < 0.01 then
+            if SpeedLinearVelocity then
+                pcall(function() SpeedLinearVelocity:Destroy() end)
+                SpeedLinearVelocity = nil
+            end
+        else
+            -- 有移动输入：创建/更新 BodyVelocity
+            if not SpeedLinearVelocity or not SpeedLinearVelocity.Parent then
+                if SpeedLinearVelocity then pcall(function() SpeedLinearVelocity:Destroy() end) end
+
+                SpeedLinearVelocity = Instance.new("BodyVelocity")
+                SpeedLinearVelocity.Name = "CAT_SpeedBodyVelocity"
+                SpeedLinearVelocity.MaxForce = Vector3.new(1e5, 0, 1e5) -- 只作用 XZ，Y 轴不干扰跳跃/重力
+                SpeedLinearVelocity.P = 1250
+                SpeedLinearVelocity.Parent = hrp
+            end
+
+            -- 转换系数 3.5 让手感接近 WalkSpeed
+            local targetSpeed = SpeedValue * 3.5
+            local targetVel = moveDir.Unit * targetSpeed
+
+            -- 保留当前 Y 轴速度（不影响跳跃/下落）
+            local currentVel = hrp.AssemblyLinearVelocity
+            SpeedLinearVelocity.Velocity = Vector3.new(targetVel.X, currentVel.Y, targetVel.Z)
+        end
     end
+else
+    -- 关闭加速时清理约束
+    if SpeedLinearVelocity then
+        pcall(function() SpeedLinearVelocity:Destroy() end)
+        SpeedLinearVelocity = nil
+    end
+    if SpeedAttachment then
+        pcall(function() SpeedAttachment:Destroy() end)
+        SpeedAttachment = nil
+    end
+    if SpeedForce then
+        pcall(function() SpeedForce:Destroy() end)
+        SpeedForce = nil
+    end
+    if SpeedForceAttach then
+        pcall(function() SpeedForceAttach:Destroy() end)
+        SpeedForceAttach = nil
+    end
+    -- WalkSpeed 模式恢复默认值
+    if hum and SpeedMode == "WalkSpeed" and hum.WalkSpeed ~= 16 and not SpeedState then
+        hum.WalkSpeed = 16
+    end
+end
+    end
+
     if not ShouldLock() then CL.CurrentTarget=nil; CL.LockedPart=nil; return end
     local origin=Camera.CFrame.Position
     CL.ScanTimer=CL.ScanTimer+dt
@@ -10962,9 +11176,19 @@ RunService.Heartbeat:Connect(function()
                     local distL=tag:FindFirstChild("DL")
                     local tr=player.Character:FindFirstChild("HumanoidRootPart")
                     if nameL and nameL.Visible then nameL.Text=player.Name end
-                    if distL and distL.Visible and tr then
-                        distL.Text=math.floor((myPos-tr.Position).Magnitude).."M"
-                    end
+if distL and distL.Visible and tr then
+    distL.Text=math.floor((myPos-tr.Position).Magnitude).."M"
+end
+local wlbl = tag:FindFirstChild("WL")
+if wlbl then
+    local ct = player.Character:FindFirstChildOfClass("Tool")
+    if ct then
+        wlbl.Text = ct.Name
+        wlbl.Visible = true
+    else
+        wlbl.Visible = false
+    end
+end
                 end
             end
         end
