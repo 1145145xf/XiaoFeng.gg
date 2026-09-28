@@ -6488,6 +6488,7 @@ end)
 -- == State ==
 local RB_State, RF_State, AutoReload, DownCheck   = false, false, false, false
 local Debug_Rays, TargetMode, HitSoundSelection   = false, "Near", "None"
+local HitSoundMode = "On Hit"   -- 新增："On Hit"（命中响）或 "On Shot"（开枪响）
 local Origin_Radius, Hit_Radius                   = 18.50, 23.50
 local Origin_Scans, Hit_Scans                     = 24, 24
 local ScanRate                                     = 14
@@ -6747,6 +6748,7 @@ local HitSounds = {
     ["Neverlose"] = "rbxassetid://8726881116",
     ["Gamesense"] = "rbxassetid://4817809188",
     ["Liang"] = "rbxassetid://139480497574511",
+    ["Solemn mourning"] = "rbxassetid://122415072543868", 
 }
 
 local SpeedState, JumpState, SpeedValue, JumpValue = false, false, 33.5, 73
@@ -7107,14 +7109,16 @@ local oldNamecall
 oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
     local method = getnamecallmethod()
     local args = {...}
-    if method == "FireServer" and self == ZF_H then
-        if HitSoundSelection ~= "None" and HitSounds[HitSoundSelection] then
-            task.spawn(function()
-                local s = Instance.new("Sound", Camera); s.SoundId = HitSounds[HitSoundSelection]; s.Volume = 1; s:Play()
-                Debris:AddItem(s, 1)
-            end)
-        end
+    if method == "FireServer" then
+    local hitTrigger  = (HitSoundMode == "On Hit")  and self == ZF_H
+    local shotTrigger = (HitSoundMode == "On Shot") and self == GN_S
+    if (hitTrigger or shotTrigger) and HitSoundSelection ~= "None" and HitSounds[HitSoundSelection] then
+        task.spawn(function()
+            local s = Instance.new("Sound", Camera); s.SoundId = HitSounds[HitSoundSelection]; s.Volume = 1; s:Play()
+            Debris:AddItem(s, 1)
+        end)
     end
+end
     if method == "FireServer" and NoFallEnabled and self.Name == "__RZDONL" then
         local cs = getcallingscript()
         if cs and cs:IsDescendantOf(game) then return nil end
@@ -9080,7 +9084,8 @@ s1:Slider({Name="Wallbang Distance", Flag="CAT_Wallbang_Distance", Min=0, Max=10
         s1:Slider({Name="Hit Scans", Flag="CAT_Hit_Scans_34",    Min=1,   Max=50, Default=24,    Callback=function(v) Hit_Scans=math.floor(v) end})
         local s2 = Rage:Section({Name="Target Selection", Side=2})
         s2:Dropdown({Name="Target Mode", Flag="CAT_Target_Mode_35", Items={"Near","Mouse","Centre","Lock"},         Default="Near", Callback=function(v) TargetMode=v end})
-        s2:Dropdown({Name="Hit Sound", Flag="CAT_Hit_Sound_36",   Items={"None","Skeet","Neverlose","Gamesense","Liang"}, Default="None", Callback=function(v) HitSoundSelection=v end})
+        s2:Dropdown({Name="Hit Sound", Flag="CAT_Hit_Sound_36",   Items={"None","Skeet","Neverlose","Gamesense","Liang","Solemn mourning"}, Default="None", Callback=function(v) HitSoundSelection=v end})
+s2:Dropdown({Name="Sound Trigger", Flag="CAT_Hit_Sound_Mode", Items={"On Hit","On Shot"}, Default="On Hit", Callback=function(v) HitSoundMode=v end})
     end
 end
 
