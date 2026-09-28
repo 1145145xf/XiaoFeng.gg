@@ -8899,6 +8899,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
+
 -- =====================================================================
 -- == UI Construction (IIFE: all locals isolated from main chunk)
 -- =====================================================================
@@ -9087,6 +9088,282 @@ do -- Visuals page
     local Page  = Window:Page({Name="Visuals", SubPages=true})
     local Sub   = Page:SubPage({Name="Main", Columns=2})
     local World = Page:SubPage({Name="World", Columns=2})
+    local Glow  = Page:SubPage({Name="Glow", Columns=2})
+
+
+do -- Player Glow subpage
+    -- ============================================================
+    -- == GlowHL 状态
+    -- ============================================================
+    local GlowHL = {
+        Enabled      = false,
+        TargetOnly   = false,
+        Color        = Color3.fromRGB(0, 170, 255),
+        Intensity    = 2,
+        Range        = 14,
+        Pulse        = true,
+        PulseSpeed   = 3,
+        FillAlpha    = 0.45,
+        OutlineAlpha = 0,
+        UseLight     = true,
+        Cache        = {},
+    }
+
+    -- ============================================================
+    -- == 持久化 (XF_CC/glow.json)
+    -- ============================================================
+    local Glow_SaveFolder = "XF_CC"
+    local Glow_SaveFile   = Glow_SaveFolder .. "/glow.json"
+    local HttpService_Glow = game:GetService("HttpService")
+
+    if not isfolder(Glow_SaveFolder) then
+        pcall(makefolder, Glow_SaveFolder)
+    end
+
+    local function Glow_Save()
+        pcall(function()
+            writefile(Glow_SaveFile, HttpService_Glow:JSONEncode({
+                Color        = {GlowHL.Color.R, GlowHL.Color.G, GlowHL.Color.B},
+                Intensity    = GlowHL.Intensity,
+                Range        = GlowHL.Range,
+                Pulse        = GlowHL.Pulse,
+                PulseSpeed   = GlowHL.PulseSpeed,
+                FillAlpha    = GlowHL.FillAlpha,
+                OutlineAlpha = GlowHL.OutlineAlpha,
+                UseLight     = GlowHL.UseLight,
+                TargetOnly   = GlowHL.TargetOnly,
+            }))
+        end)
+    end
+
+    -- 启动时读取
+    if isfile(Glow_SaveFile) then
+        pcall(function()
+            local d = HttpService_Glow:JSONDecode(readfile(Glow_SaveFile))
+            if type(d.Color) == "table" and d.Color[1] then
+                GlowHL.Color = Color3.new(d.Color[1], d.Color[2], d.Color[3])
+            end
+            if tonumber(d.Intensity)    then GlowHL.Intensity    = tonumber(d.Intensity)    end
+            if tonumber(d.Range)        then GlowHL.Range        = tonumber(d.Range)        end
+            if tonumber(d.PulseSpeed)   then GlowHL.PulseSpeed   = tonumber(d.PulseSpeed)   end
+            if tonumber(d.FillAlpha)    then GlowHL.FillAlpha    = tonumber(d.FillAlpha)    end
+            if tonumber(d.OutlineAlpha) then GlowHL.OutlineAlpha = tonumber(d.OutlineAlpha) end
+            if type(d.Pulse)      == "boolean" then GlowHL.Pulse      = d.Pulse      end
+            if type(d.UseLight)   == "boolean" then GlowHL.UseLight   = d.UseLight   end
+            if type(d.TargetOnly) == "boolean" then GlowHL.TargetOnly = d.TargetOnly end
+        end)
+    end
+
+    -- ============================================================
+    -- == 核心逻辑
+    -- ============================================================
+    local function Glow_Clear(player)
+        local data = GlowHL.Cache[player]
+        if not data then return end
+        if data.Highlight then data.Highlight:Destroy() end
+        if data.Light then data.Light:Destroy() end
+        GlowHL.Cache[player] = nil
+    end
+
+    local function Glow_Apply(player)
+        local char = player.Character
+        if not char then Glow_Clear(player); return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+
+        local data = GlowHL.Cache[player]
+        if not data then
+            data = {}
+            GlowHL.Cache[player] = data
+        end
+
+        if not data.Highlight or not data.Highlight.Parent then
+            local h = Instance.new("Highlight")
+            h.Name      = "CAT_GlowHL"
+            h.Adornee   = char
+            h.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+            h.Parent    = char
+            data.Highlight = h
+        end
+        data.Highlight.FillColor           = GlowHL.Color
+        data.Highlight.OutlineColor        = GlowHL.Color
+        data.Highlight.FillTransparency    = GlowHL.FillAlpha
+        data.Highlight.OutlineTransparency = GlowHL.OutlineAlpha
+
+        if GlowHL.UseLight then
+            if not data.Light or not data.Light.Parent then
+                local l = Instance.new("PointLight")
+                l.Name    = "CAT_GlowLight"
+                l.Shadows = false
+                l.Parent  = root
+                data.Light = l
+            end
+            data.Light.Color      = GlowHL.Color
+            data.Light.Brightness = GlowHL.Intensity
+            data.Light.Range      = GlowHL.Range
+        elseif data.Light then
+            data.Light:Destroy()
+            data.Light = nil
+        end
+    end
+
+    task.spawn(function()
+        while true do
+            task.wait(0.1)
+            if not GlowHL.Enabled then
+                for p in pairs(GlowHL.Cache) do Glow_Clear(p) end
+            else
+                for _, player in ipairs(Players:GetPlayers()) do
+                    if player ~= LocalPlayer and player.Character then
+                        local skip = table.find(WhiteList, player.Name) ~= nil
+                        if GlowHL.TargetOnly and not table.find(TargetList, player.Name) then
+                            skip = true
+                        end
+                        local hum = player.Character:FindFirstChildOfClass("Humanoid")
+                        if not skip and hum and hum.Health > 0 then
+                            Glow_Apply(player)
+                        else
+                            Glow_Clear(player)
+                        end
+                    end
+                end
+            end
+        end
+    end)
+
+    RunService.Heartbeat:Connect(function()
+        if not GlowHL.Enabled or not GlowHL.Pulse then return end
+        local t = tick() * GlowHL.PulseSpeed
+        local f = (math.sin(t) + 1) * 0.5
+        for _, data in pairs(GlowHL.Cache) do
+            if data.Light then
+                data.Light.Brightness = GlowHL.Intensity * (0.4 + f * 1.2)
+                data.Light.Range      = GlowHL.Range * (0.75 + f * 0.5)
+            end
+        end
+    end)
+
+    Players.PlayerRemoving:Connect(Glow_Clear)
+
+    -- ============================================================
+    -- == UI
+    -- ============================================================
+    local sec = Glow:Section({Name = "Player Glow", Side = 1})
+
+    sec:Toggle({
+        Name = "Player Glow",
+        Flag = "CAT_Glow_Enable",
+        Default = false,
+        Callback = function(v) GlowHL.Enabled = v end
+    }):Keybind({Flag="CAT_Glow_Enable_KB", Mode="Toggle", Callback=function(v)
+        if Library and Library.SetFlags and Library.SetFlags["CAT_Glow_Enable"] then
+            Library.SetFlags["CAT_Glow_Enable"](v)
+        end
+    end})
+
+    sec:Toggle({
+        Name = "Target only",
+        Flag = "CAT_Glow_TargetOnly",
+        Default = GlowHL.TargetOnly,
+        Callback = function(v) GlowHL.TargetOnly = v; Glow_Save() end
+    }):Keybind({Flag="CAT_Glow_TargetOnly_KB", Mode="Toggle", Callback=function(v)
+        if Library and Library.SetFlags and Library.SetFlags["CAT_Glow_TargetOnly"] then
+            Library.SetFlags["CAT_Glow_TargetOnly"](v)
+        end
+    end})
+
+    local colorT = sec:Toggle({
+        Name = "Color", Flag = "CAT_Glow_ColorT",
+        Default = false, Callback = function() end
+    })
+    colorT:Colorpicker({
+        Name = "Glow Color",
+        Flag = "CAT_Glow_Color",
+        Default = GlowHL.Color,
+        Callback = function(c) GlowHL.Color = c; Glow_Save() end
+    })
+
+    sec:Slider({
+        Name = "Intensity",
+        Flag = "CAT_Glow_Intensity",
+        Min = 0, Max = 10, Default = GlowHL.Intensity, Decimals = 0.1,
+        Callback = function(v) GlowHL.Intensity = v; Glow_Save() end
+    })
+
+    sec:Slider({
+        Name = "Range",
+        Flag = "CAT_Glow_Range",
+        Min = 1, Max = 60, Default = GlowHL.Range,
+        Callback = function(v) GlowHL.Range = v; Glow_Save() end
+    })
+
+    sec:Slider({
+        Name = "Fill alpha",
+        Flag = "CAT_Glow_FillAlpha",
+        Min = 0, Max = 1, Default = GlowHL.FillAlpha, Decimals = 0.01,
+        Callback = function(v) GlowHL.FillAlpha = v; Glow_Save() end
+    })
+
+    sec:Slider({
+        Name = "Outline alpha",
+        Flag = "CAT_Glow_OutlineAlpha",
+        Min = 0, Max = 1, Default = GlowHL.OutlineAlpha, Decimals = 0.01,
+        Callback = function(v) GlowHL.OutlineAlpha = v; Glow_Save() end
+    })
+
+    local pulseT = sec:Toggle({
+        Name = "Pulse",
+        Flag = "CAT_Glow_Pulse",
+        Default = GlowHL.Pulse,
+        Callback = function(v) GlowHL.Pulse = v; Glow_Save() end
+    })
+    pulseT:Keybind({Flag="CAT_Glow_Pulse_KB", Mode="Toggle", Callback=function(v)
+        if Library and Library.SetFlags and Library.SetFlags["CAT_Glow_Pulse"] then
+            Library.SetFlags["CAT_Glow_Pulse"](v)
+        end
+    end})
+
+    sec:Slider({
+        Name = "Pulse speed",
+        Flag = "CAT_Glow_PulseSpeed",
+        Min = 0.1, Max = 10, Default = GlowHL.PulseSpeed, Decimals = 0.1,
+        Callback = function(v) GlowHL.PulseSpeed = v; Glow_Save() end
+    })
+
+    sec:Toggle({
+        Name = "Use PointLight",
+        Flag = "CAT_Glow_UseLight",
+        Default = GlowHL.UseLight,
+        Callback = function(v) GlowHL.UseLight = v; Glow_Save() end
+    })
+
+    -- ============================================================
+    -- == 手动保存/重置按钮
+    -- ============================================================
+    local btn = sec:Button()
+    btn:Add("Save", function()
+        Glow_Save()
+        if Library and Library.Notification then
+            Library:Notification("Glow", "配置已保存", 3)
+        end
+    end)
+    btn:Add("Reset", function()
+        GlowHL.Color        = Color3.fromRGB(0, 170, 255)
+        GlowHL.Intensity    = 2
+        GlowHL.Range        = 14
+        GlowHL.Pulse        = true
+        GlowHL.PulseSpeed   = 3
+        GlowHL.FillAlpha    = 0.45
+        GlowHL.OutlineAlpha = 0
+        GlowHL.UseLight     = true
+        GlowHL.TargetOnly   = false
+        Glow_Save()
+        if Library and Library.Notification then
+            Library:Notification("Glow", "已恢复默认 (重开菜单生效)", 3)
+        end
+    end)
+end
+
 
     do -- World Visuals subpage
         local litSec = World:Section({Name="Lighting", Side=1})
@@ -9221,21 +9498,22 @@ local boxColorT = sec:Toggle({Name="2D Color", Flag="CAT_ESP2D_ColorT", Default=
 boxColorT:Colorpicker({Name="Box Color", Flag="CAT_ESP2D_BoxColor", Default=getgenv().ESP2D.BoxColor, Callback=function(c) getgenv().ESP2D.BoxColor=c; getgenv().ESP2D_Save() end})
 boxColorT:Colorpicker({Name="Fill Color", Flag="CAT_ESP2D_FillColor", Default=getgenv().ESP2D.FillColor, Callback=function(c) getgenv().ESP2D.FillColor=c; getgenv().ESP2D_Save() end})
 end
-do -- DealerMan ESP + TEC-9 display + Body Colors ESP
+do -- DealerMan ESP + TEC-9 display + RebelDealer ESP
     -- ================================================================
     -- State
     -- ================================================================
     local DealerESP = {
-        Enabled           = false,   -- DealerMan 透视
-        TEC9Show          = false,   -- TEC-9 售卖显示
-        BodyColorsEnabled = false,   -- Body Colors 独立透视
-        TargetName        = "DealerMan",
-        ItemName          = "TEC-9",
-        ByModel           = {},      -- DealerMan 模型表
-        BodyColorItems    = {},      -- Body Colors 对象表（独立）
-        Acc               = 0,
-        UpdateInterval    = 0.25,
-        Gold              = Color3.fromRGB(255, 215, 0),
+        Enabled            = false,   -- DealerMan 透视
+        TEC9Show           = false,   -- TEC-9 售卖显示
+        RebelDealerEnabled = false,   -- RebelDealer 金色名字/高亮
+        TargetName         = "DealerMan",
+        ItemName           = "TEC-9",
+        RebelDealerName    = "RebelDealer",
+        ByModel            = {},      -- DealerMan 模型表
+        RebelDealerItems   = {},      -- RebelDealer 对象表
+        Acc                = 0,
+        UpdateInterval     = 0.25,
+        Gold               = Color3.fromRGB(255, 215, 0),
     }
 
     -- ================================================================
@@ -9281,17 +9559,8 @@ do -- DealerMan ESP + TEC-9 display + Body Colors ESP
         return false, nil
     end
 
-    -- 判断是否是 DealerMan 下的 Body Colors 对象
-    -- 匹配路径: .../DealerMan["Body Colors"]
-    local function isBodyColorsObject(obj)
-        if obj.Name ~= "Body Colors" then return false end
-        local parent = obj.Parent
-        if not parent then return false end
-        return parent.Name == DealerESP.TargetName
-    end
-
     -- ================================================================
-    -- DealerMan 模型同步（只处理 DealerMan 本体，不碰 Body Colors）
+    -- DealerMan 模型同步（保持原样）
     -- ================================================================
     local function syncModel(model)
         local data = DealerESP.ByModel[model]
@@ -9306,7 +9575,7 @@ do -- DealerMan ESP + TEC-9 display + Body Colors ESP
 
         local hasTEC9, qty = checkTEC9(findShop(model))
 
-        -- ---------- Highlight ----------
+        -- Highlight
         if DealerESP.Enabled then
             if not data.highlight then
                 local h = Instance.new("Highlight")
@@ -9333,7 +9602,7 @@ do -- DealerMan ESP + TEC-9 display + Body Colors ESP
             end
         end
 
-        -- ---------- Billboard ----------
+        -- Billboard
         if DealerESP.TEC9Show then
             if not data.billboard then
                 local bb = Instance.new("BillboardGui")
@@ -9387,51 +9656,51 @@ do -- DealerMan ESP + TEC-9 display + Body Colors ESP
     end
 
     -- ================================================================
-    -- Body Colors 对象同步（独立：金色 Highlight + 金色 "Body Colors"）
+    -- RebelDealer 同步（金色高亮 + 金色名字）
     -- ================================================================
-    local function syncBodyColorItem(obj)
-        local data = DealerESP.BodyColorItems[obj]
+    local function syncRebelDealer(model)
+        local data = DealerESP.RebelDealerItems[model]
         if not data then return end
 
-        if not obj.Parent then
+        if not model.Parent then
             if data.highlight then data.highlight:Destroy() end
             if data.billboard then data.billboard:Destroy() end
-            DealerESP.BodyColorItems[obj] = nil
+            DealerESP.RebelDealerItems[model] = nil
             return
         end
 
-        -- 开关关闭：清理
-        if not DealerESP.BodyColorsEnabled then
+        -- 关闭开关：清理
+        if not DealerESP.RebelDealerEnabled then
             if data.highlight then data.highlight:Destroy(); data.highlight = nil end
             if data.billboard then data.billboard:Destroy(); data.billboard = nil; data.label = nil end
             return
         end
 
-        -- ---------- 金色 Highlight ----------
+        -- 金色 Highlight
         if not data.highlight then
             local h = Instance.new("Highlight")
-            h.Name                = "BodyColorsESP"
-            h.Adornee             = obj
+            h.Name                = "RebelDealerESP"
+            h.Adornee             = model
             h.DepthMode           = Enum.HighlightDepthMode.AlwaysOnTop
-            h.FillTransparency    = 0.5
+            h.FillTransparency    = 0.6
             h.OutlineTransparency = 0
-            h.Parent              = obj
+            h.Parent              = model
             data.highlight        = h
         end
         data.highlight.FillColor    = DealerESP.Gold
-        data.highlight.OutlineColor = DealerESP.Gold
+        data.highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
 
-        -- ---------- 金色 "Body Colors" 文字 ----------
+        -- 金色名字
         if not data.billboard then
             local bb = Instance.new("BillboardGui")
-            bb.Name           = "BodyColorsInfo"
-            bb.Adornee        = obj
-            bb.Size           = UDim2.new(0, 190, 0, 34)
+            bb.Name           = "RebelDealerInfo"
+            bb.Adornee        = model
+            bb.Size           = UDim2.new(0, 260, 0, 34)
             bb.AlwaysOnTop    = true
             bb.LightInfluence = 0
             bb.MaxDistance    = 900
             bb.ResetOnSpawn   = false
-            bb.Parent         = obj
+            bb.Parent         = model
 
             local lbl = Instance.new("TextLabel")
             lbl.Name                   = "Info"
@@ -9443,25 +9712,20 @@ do -- DealerMan ESP + TEC-9 display + Body Colors ESP
             lbl.TextWrapped            = false
             lbl.TextStrokeTransparency = 0.4
             lbl.TextColor3             = DealerESP.Gold
-            lbl.Text                   = "Body Colors"
+            lbl.Text                   = DealerESP.RebelDealerName
             lbl.Parent                 = bb
 
             data.billboard = bb
             data.label     = lbl
         end
         data.label.TextColor3 = DealerESP.Gold
-        data.label.Text       = "Body Colors"
+        data.label.Text       = DealerESP.RebelDealerName
 
-        -- 定位：Model 用 GetBoundingBox，BasePart 用 Size
-        if obj:IsA("Model") then
-            local ok, _, size = pcall(function() return obj:GetBoundingBox() end)
-            if ok and size then
-                data.billboard.StudsOffsetWorldSpace = Vector3.new(0, size.Y / 2 + 2, 0)
-            end
-        elseif obj:IsA("BasePart") then
-            data.billboard.StudsOffsetWorldSpace = Vector3.new(0, obj.Size.Y / 2 + 2, 0)
-        else
-            data.billboard.StudsOffsetWorldSpace = Vector3.new(0, 3, 0)
+        local ok, _, size = pcall(function()
+            return model:GetBoundingBox()
+        end)
+        if ok and size then
+            data.billboard.StudsOffsetWorldSpace = Vector3.new(0, size.Y / 2 + 2, 0)
         end
     end
 
@@ -9488,22 +9752,24 @@ do -- DealerMan ESP + TEC-9 display + Body Colors ESP
         syncModel(model)
     end
 
-    local function addBodyColorItem(obj)
-        if DealerESP.BodyColorItems[obj] then return end
-        if not isBodyColorsObject(obj) then return end
+    local function addRebelDealer(model)
+        if not model:IsA("Model") then return end
+        if model.Name ~= DealerESP.RebelDealerName then return end
+        if DealerESP.RebelDealerItems[model] then return end
+        if LocalPlayer.Character and model:IsDescendantOf(LocalPlayer.Character) then return end
 
-        DealerESP.BodyColorItems[obj] = {}
+        DealerESP.RebelDealerItems[model] = {}
 
-        obj.Destroying:Connect(function()
-            local data = DealerESP.BodyColorItems[obj]
+        model.Destroying:Connect(function()
+            local data = DealerESP.RebelDealerItems[model]
             if data then
                 if data.highlight then data.highlight:Destroy() end
                 if data.billboard then data.billboard:Destroy() end
             end
-            DealerESP.BodyColorItems[obj] = nil
+            DealerESP.RebelDealerItems[model] = nil
         end)
 
-        syncBodyColorItem(obj)
+        syncRebelDealer(model)
     end
 
     local function scanDealers()
@@ -9514,10 +9780,8 @@ do -- DealerMan ESP + TEC-9 display + Body Colors ESP
         for _, desc in ipairs(shopz:GetDescendants()) do
             if desc.Name == DealerESP.TargetName and desc:IsA("Model") then
                 addDealerModel(desc)
-            elseif desc.Name == "Body Colors" then
-                if isBodyColorsObject(desc) then
-                    addBodyColorItem(desc)
-                end
+            elseif desc.Name == DealerESP.RebelDealerName and desc:IsA("Model") then
+                addRebelDealer(desc)
             end
         end
     end
@@ -9526,8 +9790,8 @@ do -- DealerMan ESP + TEC-9 display + Body Colors ESP
         for model in pairs(DealerESP.ByModel) do
             pcall(syncModel, model)
         end
-        for obj in pairs(DealerESP.BodyColorItems) do
-            pcall(syncBodyColorItem, obj)
+        for model in pairs(DealerESP.RebelDealerItems) do
+            pcall(syncRebelDealer, model)
         end
     end
 
@@ -9543,16 +9807,14 @@ do -- DealerMan ESP + TEC-9 display + Body Colors ESP
         shopz.DescendantAdded:Connect(function(desc)
             if desc.Name == DealerESP.TargetName and desc:IsA("Model") then
                 addDealerModel(desc)
-            elseif desc.Name == "Body Colors" then
-                if isBodyColorsObject(desc) then
-                    addBodyColorItem(desc)
-                end
+            elseif desc.Name == DealerESP.RebelDealerName and desc:IsA("Model") then
+                addRebelDealer(desc)
             end
         end)
     end)
 
     RunService.Heartbeat:Connect(function(dt)
-        if not (DealerESP.Enabled or DealerESP.TEC9Show or DealerESP.BodyColorsEnabled) then return end
+        if not (DealerESP.Enabled or DealerESP.TEC9Show or DealerESP.RebelDealerEnabled) then return end
         DealerESP.Acc = DealerESP.Acc + dt
         if DealerESP.Acc < DealerESP.UpdateInterval then return end
         DealerESP.Acc = 0
@@ -9603,20 +9865,20 @@ do -- DealerMan ESP + TEC-9 display + Body Colors ESP
     })
 
     sec:Toggle({
-        Name    = "Body Colors ESP",
-        Flag    = "CAT_Dealer_BodyColors",
+        Name    = "RebelDealer ESP",
+        Flag    = "CAT_Dealer_RebelDealer",
         Default = false,
         Callback = function(v)
-            DealerESP.BodyColorsEnabled = v
+            DealerESP.RebelDealerEnabled = v
             if v then scanDealers() end
             refreshAll()
         end
     }):Keybind({
-        Flag = "CAT_Dealer_BodyColors_KB",
+        Flag = "CAT_Dealer_RebelDealer_KB",
         Mode = "Toggle",
         Callback = function(v)
-            if Library and Library.SetFlags and Library.SetFlags["CAT_Dealer_BodyColors"] then
-                Library.SetFlags["CAT_Dealer_BodyColors"](v)
+            if Library and Library.SetFlags and Library.SetFlags["CAT_Dealer_RebelDealer"] then
+                Library.SetFlags["CAT_Dealer_RebelDealer"](v)
             end
         end
     })
