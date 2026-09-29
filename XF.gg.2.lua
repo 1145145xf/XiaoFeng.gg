@@ -6383,6 +6383,50 @@ local CoreGui      = game:GetService("CoreGui")
 local TweenService = game:GetService("TweenService")
 local LocalPlayer  = Players.LocalPlayer
 local Camera       = Workspace.CurrentCamera
+
+
+-- ============================================================
+-- == 加载音效（脚本加载时播放一次）
+-- ============================================================
+do
+    task.spawn(function()
+        local SoundService = game:GetService("SoundService")
+        local LoadSound = Instance.new("Sound")
+        LoadSound.Name      = "XF_LoadSound"
+        LoadSound.SoundId   = "rbxassetid://76312045996232"
+        LoadSound.Volume    = 1
+        LoadSound.PlayOnRemove = false
+        LoadSound.Parent    = SoundService
+
+        -- 等待音频资源加载完成再播放，避免"第一次播放无声"
+        local loaded = false
+        local conn
+        conn = LoadSound.Loaded:Connect(function() loaded = true end)
+
+        LoadSound:Play()
+
+        -- 最多等 3 秒（防止网络慢时永久挂起）
+        local timeout = tick() + 3
+        while not loaded and tick() < timeout do
+            task.wait(0.05)
+        end
+
+        if conn then conn:Disconnect() end
+
+        -- 若加载期间还没播成功，重试一次
+        if not LoadSound.IsPlaying then
+            LoadSound:Play()
+        end
+
+        -- 播完后清理
+        task.delay(math.max(LoadSound.TimeLength, 1) + 0.5, function()
+            if LoadSound then LoadSound:Destroy() end
+        end)
+    end)
+end
+
+
+
 -- ============================================================
 -- 自动买药
 -- ============================================================
